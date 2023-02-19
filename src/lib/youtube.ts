@@ -3,7 +3,6 @@ import { container, type SapphireClient } from "@sapphire/framework";
 import { ChannelType, EmbedBuilder } from "discord.js";
 import type { youtube_v3 } from "googleapis";
 import { GaxiosError, request } from 'gaxios';
-import { createHash } from 'crypto';
 
 export async function rateLimitedFetch<T>(request: () => Promise<T>, rateLimitMessage: string) {
     try {
@@ -96,6 +95,28 @@ export async function fetchVideoThumbnail(url: string) {
     return Buffer.from(response.data, 'binary')
 }
 
+export async function hashThumbnail(thumbnail: Buffer) {
+    return thumbnail.toString('base64')
+}
+
+export async function toPrismaVideos({ video, thumbnailHash }: {
+    video: youtube_v3.Schema$Video
+    thumbnailHash?: string | undefined
+}): Promise<Video> {
+    if (!thumbnailHash) {
+        const thumbnail = await fetchVideoThumbnail(video.snippet?.thumbnails?.default?.url || "")
+        thumbnailHash = await hashThumbnail(thumbnail)
+    }
+    return {
+        channelId: video.snippet?.channelId || "",
+        id: video.id || "",
+        thumbnailHash: thumbnailHash,
+        title: video.snippet?.title || "",
+        updatedAt: new Date(),
+        url: `https://www.youtube.com/watch?v=${video.id}`
+    }
+};
+
 export async function syncYoutubeVideos({ client, youtube }: {
     client: SapphireClient,
     youtube: youtube_v3.Youtube
@@ -106,8 +127,8 @@ export async function syncYoutubeVideos({ client, youtube }: {
         youtube,
         channelId
     })
-
     if (!allVideos) return;
+
     const existingVideos = await container.prisma.video.findMany({
         where: {
             channelId: {
@@ -116,60 +137,42 @@ export async function syncYoutubeVideos({ client, youtube }: {
         }
     })
 
-    const newVideos = allVideos.filter(video => !existingVideos.some(existingVideo => existingVideo.id == video.id))
-
-    // 1. Create new videos
-
-    // TODO: Error / skip if empty fields
-    const toPrismaVideos = (video: youtube_v3.Schema$Video): Video => ({
-        channelId: video.snippet?.channelId || "",
-        id: video.id || "",
-        thumbnailHash: "",
-        title: video.snippet?.title || "",
-        updatedAt: new Date(),
-        url: `https://www.youtube.com/watch?v=${video.id}`
-    });
-
-    await container.prisma.$transaction(
-        newVideos.map(video => container.prisma.video.create({
-            data: toPrismaVideos(video)
-        }))
-    )
-
-    // 2. Diff existing videos 
+    // 1. Diff existing videos 
     const videoLookup = new Map<string, Video>(
         existingVideos.map(video => [video.id, video])
     );
-
-    const videosWithNewThumbnails: youtube_v3.Schema$Video[] = [];
-
-    // TODO: Make async
-    for (const video of allVideos) {
-        if (!video.id) {
-            container.logger.error("Video has no id: ", video)
-            continue;
+    const videosWithNewThumbnails = (await Promise.all(allVideos.map(async video => {
+        if (!video.id) return; // TODO: Prboably should error
+        const newVideoData = await toPrismaVideos({
+            video
+        });
+        const oldVideoData = videoLookup.get(video.id);
+        if (newVideoData != oldVideoData) {
+            return video;
         }
-        const thumbnail = video.snippet?.thumbnails?.high
-        if (!thumbnail || !thumbnail.url) {
-            container.logger.error("Video has no thumbnail: ", video)
-            continue;
-        }
-        const existingVideo = videoLookup.get(video.id);
-        if (!existingVideo) {
-            container.logger.error("Video not found in lookup: ", video.id)
-            continue;
-        }
+        return;
+    }))).filter(video => video) as youtube_v3.Schema$Video[]; // 🤮
+
+    const updatedVideoData = await Promise.all(allVideos.map(async video => {
+        return toPrismaVideos({
+            video
+        })
+    }))
+
+    await container.prisma.$transaction(
+        updatedVideoData.map(video => {
+            return container.prisma.video.upsert({
+                where: {
+                    id: video.id
+                },
+                create: video,
+                update: video
+            })
+        })
+    )
 
 
-        const fetchedThumbnail = await fetchVideoThumbnail(thumbnail.url)
-        const oldThumbnailHash = existingVideo.thumbnailHash;
-        const newThumbnailHash = fetchedThumbnail.toString('base64');
-        if (oldThumbnailHash != newThumbnailHash) {
-            videosWithNewThumbnails.push(video);
-        }
-    }
-
-
+    // 3. Notify of new thumbnails
     const notificationChannel = await client.channels.fetch("1076656830324936744");
     if (!notificationChannel?.isTextBased() || notificationChannel.type == ChannelType.GuildStageVoice) {
         container.logger.error("Could not find valid notification channel")
