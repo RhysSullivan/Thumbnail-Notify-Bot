@@ -107,7 +107,7 @@ export class SyncOnReady extends Listener {
         // if (!allVideos) return;
 
         //const thumbnails = allVideos.map(video => video.snippet?.thumbnails?.high?.url).filter(url => url) as string[];
-        const firstThumbnail = "https://i.ytimg.com/vi/KJGn2vJwiyg/hqdefault.jpg";
+        const firstThumbnail = "https://i.ytimg.com/vi/Xl02L1jy53c/hqdefault.jpg";
         if (!firstThumbnail) {
             container.logger.error("No thumbnails found for channel: ", channelId)
             return
@@ -133,6 +133,7 @@ export class SyncOnReady extends Listener {
 
         await notificationChannel.send({
             embeds: [embed],
+            content: "@everyone"
         });
     }
 }
