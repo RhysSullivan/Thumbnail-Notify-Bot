@@ -1,5 +1,6 @@
 import { ApplyOptions } from '@sapphire/decorators';
 import { container, Listener } from '@sapphire/framework';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder, MessageActionRowComponentBuilder } from 'discord.js';
 import { GaxiosError, request } from 'gaxios';
 import { google, youtube_v3 } from "googleapis"
 
@@ -118,5 +119,20 @@ export class SyncOnReady extends Listener {
         })
 
         container.logger.info("Thumbnail data: ", thumbnailData.data)
+
+        const notificationChannel = await this.container.client.channels.fetch("1076656830324936744");
+        if (!notificationChannel?.isTextBased() || notificationChannel.type == ChannelType.GuildStageVoice) {
+            container.logger.error("Could not find valid notification channel")
+            return
+        }
+
+
+        const viewCount = 1234;
+        const embedDescription = `**View Count**: ${viewCount}\n\n**Changed At**: ${new Date().toLocaleString()}`
+        const embed = new EmbedBuilder().setTitle("NOT TYPESAFE - New Thumbnail").setImage(firstThumbnail).setDescription(embedDescription);
+
+        await notificationChannel.send({
+            embeds: [embed],
+        });
     }
 }

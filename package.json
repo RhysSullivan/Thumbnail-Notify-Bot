@@ -27,11 +27,11 @@
     "typescript": "^4.9.4"
   },
   "scripts": {
-    "dev": "rm -rf dist && tsc && run-p watch start",
+    "dev": "rm -rf dist && yarn build && run-p watch start",
     "build": "tsc",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
-    "watch:start": "tsc-watch \"npm run start\"",
+    "watch:start": "tsc-watch --onSuccess \"npm run start\"",
     "format": "prettier --write \"src/\""
   },
   "prettier": "@sapphire/prettier-config"
