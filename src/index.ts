@@ -1,5 +1,13 @@
 import './lib/setup';
-import { LogLevel, SapphireClient } from '@sapphire/framework';
+import { container, LogLevel, SapphireClient } from '@sapphire/framework';
+import { PrismaClient } from '@prisma/client';
+
+declare module "@sapphire/pieces" {
+	interface Container {
+		prisma: PrismaClient
+	}
+}
+
 
 const client = new SapphireClient({
 	defaultPrefix: '!',
@@ -14,9 +22,12 @@ const client = new SapphireClient({
 	}
 });
 
+const prisma = new PrismaClient();
+
 const main = async () => {
 	try {
 		client.logger.info('Logging in');
+		container.prisma = prisma;
 		await client.login();
 		client.logger.info('logged in');
 	} catch (error) {

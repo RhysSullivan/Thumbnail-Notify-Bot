@@ -1,3 +1,4 @@
+import type { Video } from '@prisma/client';
 import { ApplyOptions } from '@sapphire/decorators';
 import { container, Listener } from '@sapphire/framework';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder, MessageActionRowComponentBuilder } from 'discord.js';
@@ -87,6 +88,14 @@ async function fetchAllChannelVideos({
     return allVideos;
 }
 
+async function fetchVideoThumbnail(url: string) {
+    return request<Buffer>({
+        url,
+        responseType: 'arraybuffer'
+    })
+
+}
+
 @ApplyOptions<Listener.Options>({ once: true, event: "ready" })
 export class SyncOnReady extends Listener {
     public CHNANEL_USERNAME = 'Theo - t3․gg';
@@ -98,28 +107,75 @@ export class SyncOnReady extends Listener {
             auth: process.env.GOOGLE_API_KEY
         });
 
+
         const channelId = "UCbRP3c757lWg9M-U7TyEkXA";
-        // const allVideos = await fetchAllChannelVideos({
-        //     youtube,
-        //     channelId
-        // })
-
-        // if (!allVideos) return;
-
-        //const thumbnails = allVideos.map(video => video.snippet?.thumbnails?.high?.url).filter(url => url) as string[];
-        const firstThumbnail = "https://i.ytimg.com/vi/Xl02L1jy53c/hqdefault.jpg";
-        if (!firstThumbnail) {
-            container.logger.error("No thumbnails found for channel: ", channelId)
-            return
-        }
-
-        const thumbnailData = await request<Buffer>({
-            url: firstThumbnail,
-            responseType: 'arraybuffer'
+        const allVideos = await fetchAllChannelVideos({
+            youtube,
+            channelId
         })
 
-        container.logger.info("Thumbnail data: ", thumbnailData.data)
+        if (!allVideos) return;
+        const existingVideos = await container.prisma.video.findMany({
+            where: {
+                channelId: {
+                    equals: channelId
+                }
+            }
+        })
 
+        const newVideos = allVideos.filter(video => !existingVideos.some(existingVideo => existingVideo.id == video.id))
+
+        // 1. Create new videos
+
+        const toPrismaVideos = (video: youtube_v3.Schema$Video): Video => ({
+            channelId: video.snippet?.channelId || "",
+            id: video.id || "",
+            thumbnailHash: "",
+            title: video.snippet?.title || "",
+            updatedAt: new Date(),
+            url: `https://www.youtube.com/watch?v=${video.id}`
+        });
+
+        await container.prisma.$transaction(
+            newVideos.map(video => container.prisma.video.create({
+                data: toPrismaVideos(video)
+            }))
+        )
+
+
+
+        // 2. Diff existing videos 
+        const videoLookup = new Map<string, Video>(
+            existingVideos.map(video => [video.id, video])
+        );
+
+        const videosWithNewThumbnails: youtube_v3.Schema$Video[] = [];
+
+        // TODO: Make async
+        for (const video of allVideos) {
+            if (!video.id) {
+                container.logger.error("Video has no id: ", video)
+                continue;
+            }
+            const thumbnail = video.snippet?.thumbnails?.high
+            if (!thumbnail || !thumbnail.url) {
+                container.logger.error("Video has no thumbnail: ", video)
+                continue;
+            }
+            const existingVideo = videoLookup.get(video.id);
+            if (!existingVideo) {
+                container.logger.error("Video not found in lookup: ", video.id)
+                continue;
+            }
+
+
+            const fetchedThumbnail = await fetchVideoThumbnail(thumbnail.url)
+            const oldThumbnailHash = existingVideo.thumbnailHash;
+            const newThumbnailHash = fetchedThumbnail.data.toString('base64');
+            if (oldThumbnailHash != newThumbnailHash) {
+                videosWithNewThumbnails.push(video);
+            }
+        }
         const notificationChannel = await this.container.client.channels.fetch("1076656830324936744");
         if (!notificationChannel?.isTextBased() || notificationChannel.type == ChannelType.GuildStageVoice) {
             container.logger.error("Could not find valid notification channel")
@@ -127,13 +183,23 @@ export class SyncOnReady extends Listener {
         }
 
 
-        const viewCount = 1234;
-        const embedDescription = `**View Count**: ${viewCount}\n\n**Changed At**: ${new Date().toLocaleString()}`
-        const embed = new EmbedBuilder().setTitle("NOT TYPESAFE - New Thumbnail").setImage(firstThumbnail).setDescription(embedDescription);
+        for (const video of videosWithNewThumbnails) {
+            const viewCount = video.statistics?.viewCount;
+            const name = video.snippet?.title;
+            const thumbnail = video.snippet?.thumbnails?.high
+            if (!thumbnail || !thumbnail.url) {
+                container.logger.error("Video has no thumbnail: ", video)
+                continue;
+            }
+            const embedDescription = `**View Count**: ${viewCount}\n\n**Changed At**: ${new Date().toLocaleString()}`
+            const embed = new EmbedBuilder().setTitle(`${name
+                } - New Thumbnail`).setImage(thumbnail.url).setDescription(embedDescription);
 
-        await notificationChannel.send({
-            embeds: [embed],
-            content: "@everyone"
-        });
+            await notificationChannel.send({
+                embeds: [embed],
+                content: "@everyone"
+            });
+        }
+
     }
 }

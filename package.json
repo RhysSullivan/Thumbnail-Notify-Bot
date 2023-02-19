@@ -5,6 +5,7 @@
   "author": "@sapphire",
   "license": "UNLICENSE",
   "dependencies": {
+    "@prisma/client": "4.10.1",
     "@sapphire/decorators": "^6.0.0",
     "@sapphire/discord.js-utilities": "6.0.1",
     "@sapphire/framework": "^4.0.2",
@@ -23,11 +24,14 @@
     "@types/ws": "^8.5.4",
     "npm-run-all": "^4.1.5",
     "prettier": "^2.8.3",
+    "prisma": "^4.10.1",
     "tsc-watch": "^6.0.0",
     "typescript": "^4.9.4"
   },
   "scripts": {
-    "dev": "rm -rf dist && yarn build && run-p watch start",
+    "dev": "rm -rf dist && yarn build && run-p watch start start:db",
+    "start:db": "prisma studio",
+    "db:push": "prisma db push",
     "build": "tsc",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
